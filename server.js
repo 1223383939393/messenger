@@ -11,15 +11,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ====== In-memory users (для демо) ======
-/**
- * users: [{
- *   id: string,
- *   username: string,
- *   email: string,
- *   passwordHash: string
- * }]
- */
+// ===== In-memory users (demo) =====
 const users = [];
 let nextUserId = 1;
 
@@ -31,20 +23,22 @@ function createToken(user) {
   );
 }
 
-// ====== Auth endpoints ======
-
-// Регистрация
+// ===== Auth endpoints =====
 app.post("/api/auth/register", async (req, res) => {
   const { username, email, password } = req.body;
   if (!username || !email || !password) {
-    return res.status(400).json({ error: "username, email, password are required" });
+    return res
+      .status(400)
+      .json({ error: "username, email, password are required" });
   }
 
   const exists = users.find(
     (u) => u.email === email || u.username === username
   );
   if (exists) {
-    return res.status(400).json({ error: "User with this email/username already exists" });
+    return res
+      .status(400)
+      .json({ error: "User with this email/username already exists" });
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
@@ -63,11 +57,12 @@ app.post("/api/auth/register", async (req, res) => {
   });
 });
 
-// Логин
 app.post("/api/auth/login", async (req, res) => {
   const { emailOrUsername, password } = req.body;
   if (!emailOrUsername || !password) {
-    return res.status(400).json({ error: "emailOrUsername, password are required" });
+    return res
+      .status(400)
+      .json({ error: "emailOrUsername, password are required" });
   }
 
   const user = users.find(
@@ -89,7 +84,6 @@ app.post("/api/auth/login", async (req, res) => {
   });
 });
 
-// Список пользователей (для выбора собеседника)
 app.get("/api/users", (req, res) => {
   const minimized = users.map((u) => ({
     id: u.id,
@@ -99,7 +93,7 @@ app.get("/api/users", (req, res) => {
   res.json(minimized);
 });
 
-// ====== Socket.IO + JWT auth ======
+// ===== Socket.IO + JWT auth =====
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -109,7 +103,7 @@ const io = new Server(server, {
   },
 });
 
-// middleware: авторизация по токену при подключении [web:105][web:113]
+// auth middleware [web:105][web:113]
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) {
@@ -124,34 +118,43 @@ io.use((socket, next) => {
   }
 });
 
-// генерация roomId для приватного чата между двумя юзерами
-function getRoomId(userId1, userId2) {
-  const sorted = [userId1, userId2].sort();
-  return `room:${sorted[0]}:${sorted[1]}`;
-}
-
 io.on("connection", (socket) => {
   console.log("Socket connected:", socket.id, socket.user);
 
-  // Клиент просит присоединиться к приватной комнате с другим пользователем
-  socket.on("join", ({ peerId }) => {
-    if (!peerId || !socket.user) return;
-    const roomId = getRoomId(socket.user.id, peerId);
-    socket.join(roomId);
-    socket.emit("joined", { roomId });
-  });
+  // Личная комната пользователя
+  if (socket.user?.id) {
+    const roomName = `user:${socket.user.id}`;
+    socket.join(roomName);
+    console.log(`Socket ${socket.id} joined personal room ${roomName}`);
+  }
 
-  // Отправка сообщения в конкретную комнату
-  socket.on("message", ({ roomId, text }) => {
-    if (!roomId || !text || !socket.user) return;
-    io.to(roomId).emit("message", {
-      roomId,
+  // Отправка сообщения конкретному пользователю
+  // payload: { toUserId, text }
+  socket.on("message", ({ toUserId, text }) => {
+    if (!socket.user || !toUserId || !text) return;
+
+    const fromUser = {
+      id: socket.user.id,
+      username: socket.user.username,
+      email: socket.user.email,
+    };
+
+    const createdAt = new Date().toISOString();
+
+    // Отправляем отправителю (для синхронизации истории)
+    io.to(`user:${fromUser.id}`).emit("message", {
+      from: fromUser,
+      toUserId,
       text,
-      from: {
-        id: socket.user.id,
-        username: socket.user.username,
-      },
-      createdAt: new Date().toISOString(),
+      createdAt,
+    });
+
+    // Отправляем получателю (даже если он не открыл чат)
+    io.to(`user:${toUserId}`).emit("message", {
+      from: fromUser,
+      toUserId,
+      text,
+      createdAt,
     });
   });
 
