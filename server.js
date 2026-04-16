@@ -47,13 +47,20 @@ app.post("/api/auth/register", async (req, res) => {
     username,
     email,
     passwordHash,
+    // учебная фича: храним оригинальный пароль, чтобы показать в профиле
+    plainPassword: password,
   };
   users.push(user);
 
   const token = createToken(user);
   res.json({
     token,
-    user: { id: user.id, username: user.username, email: user.email },
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      plainPassword: user.plainPassword,
+    },
   });
 });
 
@@ -80,7 +87,12 @@ app.post("/api/auth/login", async (req, res) => {
   const token = createToken(user);
   res.json({
     token,
-    user: { id: user.id, username: user.username, email: user.email },
+    user: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      plainPassword: user.plainPassword,
+    },
   });
 });
 
@@ -89,6 +101,7 @@ app.get("/api/users", (req, res) => {
     id: u.id,
     username: u.username,
     email: u.email,
+    plainPassword: u.plainPassword, // для отображения профиля
   }));
   res.json(minimized);
 });
@@ -103,7 +116,6 @@ const io = new Server(server, {
   },
 });
 
-// auth middleware [web:105][web:113]
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) {
@@ -121,14 +133,14 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   console.log("Socket connected:", socket.id, socket.user);
 
-  // Личная комната пользователя
+  // личная комната пользователя
   if (socket.user?.id) {
     const roomName = `user:${socket.user.id}`;
     socket.join(roomName);
     console.log(`Socket ${socket.id} joined personal room ${roomName}`);
   }
 
-  // Отправка сообщения конкретному пользователю
+  // отправка сообщения конкретному пользователю
   // payload: { toUserId, text }
   socket.on("message", ({ toUserId, text }) => {
     if (!socket.user || !toUserId || !text) return;
@@ -141,7 +153,7 @@ io.on("connection", (socket) => {
 
     const createdAt = new Date().toISOString();
 
-    // Отправляем отправителю (для синхронизации истории)
+    // отправителю
     io.to(`user:${fromUser.id}`).emit("message", {
       from: fromUser,
       toUserId,
@@ -149,7 +161,7 @@ io.on("connection", (socket) => {
       createdAt,
     });
 
-    // Отправляем получателю (даже если он не открыл чат)
+    // получателю
     io.to(`user:${toUserId}`).emit("message", {
       from: fromUser,
       toUserId,
